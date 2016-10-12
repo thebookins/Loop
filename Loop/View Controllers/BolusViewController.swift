@@ -42,7 +42,11 @@ final class BolusViewController: UITableViewController, IdentifiableClass, UITex
         }
     }
 
-    @IBOutlet weak var bolusAmountTextField: UITextField!
+    @IBOutlet weak var bolusAmountTextField: UITextField! {
+        didSet {
+            bolusAmountTextField?.text = decimalFormatter.string(from: NSNumber(value: recommendedBolus))
+        }    
+    }
 
     // MARK: - Actions
 
