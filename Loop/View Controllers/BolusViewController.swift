@@ -29,6 +29,7 @@ final class BolusViewController: UITableViewController, IdentifiableClass, UITex
     var recommendedBolus: Double = 0 {
         didSet {
             recommendedBolusAmountLabel?.text = decimalFormatter.string(from: NSNumber(value: recommendedBolus))
+            bolusAmountTextField?.text = decimalFormatter.string(from: NSNumber(value: recommendedBolus))
         }
     }
 
