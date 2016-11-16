@@ -955,7 +955,7 @@ final class DeviceDataManager: CarbStoreDelegate, CarbStoreSyncDelegate, DoseSto
         )
 
         carbStore = CarbStore(
-            defaultAbsorptionTimes: (fast: TimeInterval(hours: 2*0.75), medium: TimeInterval(hours: 3*0.75), slow: TimeInterval(hours: 4*0.75)),
+            defaultAbsorptionTimes: (fast: TimeInterval(hours: 1), medium: TimeInterval(hours: 1.5), slow: TimeInterval(hours: 3)),
             carbRatioSchedule: carbRatioSchedule,
             insulinSensitivitySchedule: insulinSensitivitySchedule
         )

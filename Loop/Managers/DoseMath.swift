@@ -158,11 +158,14 @@ struct DoseMath {
 
         let eventualGlucoseTargets = glucoseTargetRange.value(at: eventualGlucose.startDate)
         // Use between to opt-out of the override.
-        let minGlucoseTargets = glucoseTargetRange.between(start: minGlucose.startDate, end: minGlucose.startDate).first!.value
+//        let minGlucoseTargets = glucoseTargetRange.between(start: minGlucose.startDate, end: minGlucose.startDate).first!.value
+        
+        let minGlucoseTarget = HKQuantity(unit: HKUnit.millimolesPerLiterUnit(), doubleValue: 4.0)
 
-//        guard minGlucose.quantity.doubleValue(for: glucoseTargetRange.unit) >= minGlucoseTargets.minValue else {
-//            return 0
-//        }
+        //guard minGlucose.quantity.doubleValue(for: glucoseTargetRange.unit) >= minGlucoseTargets.minValue else {
+        guard minGlucose.quantity >= minGlucoseTarget else {
+            return 0
+        }
 
         let targetGlucose = eventualGlucoseTargets.maxValue
         let currentSensitivity = insulinSensitivity.quantity(at: date).doubleValue(for: glucoseTargetRange.unit)
