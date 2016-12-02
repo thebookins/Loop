@@ -15,8 +15,9 @@ extension NumberFormatter {
         let numberFormatter = NumberFormatter()
         numberFormatter.numberStyle = .decimal
         numberFormatter.minimumFractionDigits = unit.preferredMinimumFractionDigits
-        numberFormatter.maximumSignificantDigits = 3
-        numberFormatter.usesSignificantDigits = true
+        numberFormatter.maximumFractionDigits = unit.preferredMinimumFractionDigits
+//        numberFormatter.maximumSignificantDigits = 3
+//        numberFormatter.usesSignificantDigits = true
 
         return numberFormatter
     }
