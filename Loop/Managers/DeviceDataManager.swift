@@ -14,6 +14,7 @@ import GlucoseKit
 import HealthKit
 import InsulinKit
 import LoopKit
+import LoopUI
 import MinimedKit
 import NightscoutUploadKit
 import RileyLinkKit
@@ -975,7 +976,11 @@ final class DeviceDataManager: CarbStoreDelegate, CarbStoreSyncDelegate, DoseSto
 
     // MARK: - WatchKit
 
-    private(set) var watchManager: WatchDataManager!
+    fileprivate var watchManager: WatchDataManager!
+    
+    // MARK: - Status Extension
+    
+    fileprivate var statusExtensionManager: StatusExtensionDataManager!
 
     // MARK: - Initialization
 
@@ -1033,6 +1038,7 @@ final class DeviceDataManager: CarbStoreDelegate, CarbStoreSyncDelegate, DoseSto
 
         loopManager = LoopDataManager(deviceDataManager: self)
         watchManager = WatchDataManager(deviceDataManager: self)
+        statusExtensionManager = StatusExtensionDataManager(deviceDataManager: self)
         nightscoutDataManager = NightscoutDataManager(deviceDataManager: self)
 
         carbStore?.delegate = self
@@ -1070,7 +1076,11 @@ extension DeviceDataManager: CustomDebugStringConvertible {
             "workoutModeEnabled: \(workoutModeEnabled)",
             "maximumBasalRatePerHour: \(maximumBasalRatePerHour)",
             "maximumBolus: \(maximumBolus)",
-            String(reflecting: rileyLinkManager)
+            String(reflecting: rileyLinkManager),
+            String(reflecting: statusExtensionManager!),
+            "",
+            "## NSUserDefaults",
+            String(reflecting: UserDefaults.standard.dictionaryRepresentation())
         ].joined(separator: "\n")
     }
 }
