@@ -9,6 +9,7 @@
 import WatchConnectivity
 import WatchKit
 import os
+import UserNotifications
 
 
 final class ExtensionDelegate: NSObject, WKExtensionDelegate {
@@ -20,14 +21,14 @@ final class ExtensionDelegate: NSObject, WKExtensionDelegate {
     override init() {
         super.init()
 
-        let session = WCSession.default()
+        let session = WCSession.default
         session.delegate = self
 
         // It seems, according to [this sample code](https://developer.apple.com/library/prerelease/content/samplecode/QuickSwitch/Listings/QuickSwitch_WatchKit_Extension_ExtensionDelegate_swift.html#//apple_ref/doc/uid/TP40016647-QuickSwitch_WatchKit_Extension_ExtensionDelegate_swift-DontLinkElementID_8)
         // that WCSession activation and delegation and WKWatchConnectivityRefreshBackgroundTask don't have any determinism,
         // and that KVO is the "recommended" way to deal with it.
-        session.addObserver(self, forKeyPath: "activationState", options: [], context: nil)
-        session.addObserver(self, forKeyPath: "hasContentPending", options: [], context: nil)
+        session.addObserver(self, forKeyPath: #keyPath(WCSession.activationState), options: [], context: nil)
+        session.addObserver(self, forKeyPath: #keyPath(WCSession.hasContentPending), options: [], context: nil)
 
         session.activate()
     }
@@ -40,13 +41,14 @@ final class ExtensionDelegate: NSObject, WKExtensionDelegate {
 
     func applicationDidFinishLaunching() {
         // Perform any final initialization of your application.
+        UNUserNotificationCenter.current().delegate = self
     }
 
     func applicationDidBecomeActive() {
         // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
 
-        if WCSession.default().activationState != .activated {
-            WCSession.default().activate()
+        if WCSession.default.activationState != .activated {
+            WCSession.default.activate()
         }
     }
 
@@ -90,8 +92,8 @@ final class ExtensionDelegate: NSObject, WKExtensionDelegate {
 
                 pendingConnectivityTasks.append(task)
 
-                if WCSession.default().activationState != .activated {
-                    WCSession.default().activate()
+                if WCSession.default.activationState != .activated {
+                    WCSession.default.activate()
                 }
 
                 completePendingConnectivityTasksIfNeeded()
@@ -100,15 +102,25 @@ final class ExtensionDelegate: NSObject, WKExtensionDelegate {
                 break
             }
 
-            task.setTaskCompleted()
+            if #available(watchOSApplicationExtension 4.0, *) {
+                task.setTaskCompletedWithSnapshot(false)
+            } else {
+                task.setTaskCompleted()
+            }
         }
     }
 
     private var pendingConnectivityTasks: [WKWatchConnectivityRefreshBackgroundTask] = []
 
     private func completePendingConnectivityTasksIfNeeded() {
-        if WCSession.default().activationState == .activated && !WCSession.default().hasContentPending {
-            pendingConnectivityTasks.forEach { $0.setTaskCompleted() }
+        if WCSession.default.activationState == .activated && !WCSession.default.hasContentPending {
+            pendingConnectivityTasks.forEach { (task) in
+                if #available(watchOSApplicationExtension 4.0, *) {
+                    task.setTaskCompletedWithSnapshot(false)
+                } else {
+                    task.setTaskCompleted()
+                }
+            }
             pendingConnectivityTasks.removeAll()
         }
     }
@@ -166,6 +178,13 @@ extension ExtensionDelegate: WCSessionDelegate {
         if !(userInfo["name"] is String) {
             updateContext(userInfo)
         }
+    }
+}
+
+
+extension ExtensionDelegate: UNUserNotificationCenterDelegate {
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.badge, .sound, .alert])
     }
 }
 

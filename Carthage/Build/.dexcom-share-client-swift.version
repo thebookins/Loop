@@ -1,0 +1,18 @@
+{
+  "Mac" : [
+
+  ],
+  "watchOS" : [
+
+  ],
+  "tvOS" : [
+
+  ],
+  "commitish" : "v0.4.1",
+  "iOS" : [
+    {
+      "name" : "ShareClient",
+      "hash" : "4395d06709d6265fa50352f4172681213ea76ae152f9739ab3c6e7de18f31d24"
+    }
+  ]
+}
