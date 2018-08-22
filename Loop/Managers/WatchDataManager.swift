@@ -9,19 +9,20 @@
 import HealthKit
 import UIKit
 import WatchConnectivity
+import CarbKit
 import LoopKit
 
 
 final class WatchDataManager: NSObject, WCSessionDelegate {
 
-    unowned let deviceManager: DeviceDataManager
+    unowned let deviceDataManager: DeviceDataManager
 
-    init(deviceManager: DeviceDataManager) {
-        self.deviceManager = deviceManager
+    init(deviceDataManager: DeviceDataManager) {
+        self.deviceDataManager = deviceDataManager
 
         super.init()
 
-        NotificationCenter.default.addObserver(self, selector: #selector(updateWatch(_:)), name: .LoopDataUpdated, object: deviceManager.loopManager)
+        NotificationCenter.default.addObserver(self, selector: #selector(updateWatch(_:)), name: .LoopDataUpdated, object: deviceDataManager.loopManager)
 
         watchSession?.delegate = self
         watchSession?.activate()
@@ -51,8 +52,8 @@ final class WatchDataManager: NSObject, WCSessionDelegate {
         case .tempBasal:
             break
         case .preferences:
-            let activeOverrideContext = deviceManager.loopManager.settings.glucoseTargetRangeSchedule?.activeOverrideContext
-            let configuredOverrideContexts = deviceManager.loopManager.settings.glucoseTargetRangeSchedule?.configuredOverrideContexts ?? []
+            let activeOverrideContext = deviceDataManager.loopManager.settings.glucoseTargetRangeSchedule?.activeOverrideContext
+            let configuredOverrideContexts = deviceDataManager.loopManager.settings.glucoseTargetRangeSchedule?.configuredOverrideContexts ?? []
             defer {
                 lastActiveOverrideContext = activeOverrideContext
                 lastConfiguredOverrideContexts = configuredOverrideContexts
@@ -80,7 +81,7 @@ final class WatchDataManager: NSObject, WCSessionDelegate {
     private var lastComplicationContext: WatchContext?
 
     private let minTrendDrift: Double = 20
-    private lazy var minTrendUnit = HKUnit.milligramsPerDeciliter
+    private lazy var minTrendUnit = HKUnit.milligramsPerDeciliter()
 
     private func sendWatchContext(_ context: WatchContext) {
         if let session = watchSession, session.isPaired && session.isWatchAppInstalled {
@@ -105,67 +106,67 @@ final class WatchDataManager: NSObject, WCSessionDelegate {
                 do {
                     try session.updateApplicationContext(context.rawValue)
                 } catch let error {
-                    deviceManager.logger.addError(error, fromSource: "WCSession")
+                    deviceDataManager.logger.addError(error, fromSource: "WCSession")
                 }
             }
         }
     }
 
     private func createWatchContext(_ completion: @escaping (_ context: WatchContext?) -> Void) {
-        let loopManager = deviceManager.loopManager!
+        let loopManager = deviceDataManager.loopManager!
 
         let glucose = loopManager.glucoseStore.latestGlucose
         let reservoir = loopManager.doseStore.lastReservoirValue
 
-        loopManager.getLoopState { (manager, state) in
-            let eventualGlucose = state.predictedGlucose?.last
-            let context = WatchContext(glucose: glucose, eventualGlucose: eventualGlucose, glucoseUnit: manager.glucoseStore.preferredUnit)
-            context.reservoir = reservoir?.unitVolume
+        loopManager.glucoseStore.preferredUnit { (unit, error) in
+            loopManager.getLoopState { (manager, state) in
+                let eventualGlucose = state.predictedGlucose?.last
+                let context = WatchContext(glucose: glucose, eventualGlucose: eventualGlucose, glucoseUnit: unit)
+                context.reservoir = reservoir?.unitVolume
 
-            context.loopLastRunDate = manager.lastLoopCompleted
-            context.recommendedBolusDose = state.recommendedBolus?.recommendation.amount
-            context.maxBolus = manager.settings.maximumBolus
+                context.loopLastRunDate = state.lastLoopCompleted
+                context.recommendedBolusDose = state.recommendedBolus?.recommendation.amount
+                context.maxBolus = manager.settings.maximumBolus
 
-            context.cgm = self.deviceManager.cgm
+                if let glucoseTargetRangeSchedule = manager.settings.glucoseTargetRangeSchedule {
+                    if let override = glucoseTargetRangeSchedule.override {
+                        context.glucoseRangeScheduleOverride = GlucoseRangeScheduleOverrideUserInfo(
+                            context: override.context.correspondingUserInfoContext,
+                            startDate: override.start,
+                            endDate: override.end
+                        )
+                    }
 
-            if let glucoseTargetRangeSchedule = manager.settings.glucoseTargetRangeSchedule {
-                if let override = glucoseTargetRangeSchedule.override {
-                    context.glucoseRangeScheduleOverride = GlucoseRangeScheduleOverrideUserInfo(
-                        context: override.context.correspondingUserInfoContext,
-                        startDate: override.start,
-                        endDate: override.end
-                    )
+                    let configuredOverrideContexts = self.deviceDataManager.loopManager.settings.glucoseTargetRangeSchedule?.configuredOverrideContexts ?? []
+                    let configuredUserInfoOverrideContexts = configuredOverrideContexts.map { $0.correspondingUserInfoContext }
+                    context.configuredOverrideContexts = configuredUserInfoOverrideContexts
                 }
 
-                let configuredOverrideContexts = self.deviceManager.loopManager.settings.glucoseTargetRangeSchedule?.configuredOverrideContexts ?? []
-                let configuredUserInfoOverrideContexts = configuredOverrideContexts.map { $0.correspondingUserInfoContext }
-                context.configuredOverrideContexts = configuredUserInfoOverrideContexts
-            }
+                if let trend = self.deviceDataManager.sensorInfo?.trendType {
+                    context.glucoseTrendRawValue = trend.rawValue
+                }
 
-            if let trend = self.deviceManager.sensorInfo?.trendType {
-                context.glucoseTrendRawValue = trend.rawValue
+                completion(context)
             }
-
-            completion(context)
         }
     }
 
     private func addCarbEntryFromWatchMessage(_ message: [String: Any], completionHandler: ((_ units: Double?) -> Void)? = nil) {
         if let carbEntry = CarbEntryUserInfo(rawValue: message) {
             let newEntry = NewCarbEntry(
-                quantity: HKQuantity(unit: deviceManager.loopManager.carbStore.preferredUnit, doubleValue: carbEntry.value),
+                quantity: HKQuantity(unit: deviceDataManager.loopManager.carbStore.preferredUnit, doubleValue: carbEntry.value),
                 startDate: carbEntry.startDate,
                 foodType: nil,
-                absorptionTime: carbEntry.absorptionTimeType.absorptionTimeFromDefaults(deviceManager.loopManager.carbStore.defaultAbsorptionTimes)
+                absorptionTime: carbEntry.absorptionTimeType.absorptionTimeFromDefaults(deviceDataManager.loopManager.carbStore.defaultAbsorptionTimes)
             )
 
-            deviceManager.loopManager.addCarbEntryAndRecommendBolus(newEntry) { (result) in
+            deviceDataManager.loopManager.addCarbEntryAndRecommendBolus(newEntry) { (result) in
                 switch result {
                 case .success(let recommendation):
                     AnalyticsManager.shared.didAddCarbsFromWatch(carbEntry.value)
                     completionHandler?(recommendation?.amount)
                 case .failure(let error):
-                    self.deviceManager.logger.addError(error, fromSource: error is CarbStore.CarbStoreError ? "CarbStore" : "Bolus")
+                    self.deviceDataManager.logger.addError(error, fromSource: error is CarbStore.CarbStoreError ? "CarbStore" : "Bolus")
                     completionHandler?(nil)
                 }
             }
@@ -180,11 +181,11 @@ final class WatchDataManager: NSObject, WCSessionDelegate {
         switch message["name"] as? String {
         case CarbEntryUserInfo.name?:
             addCarbEntryFromWatchMessage(message) { (units) in
-                replyHandler(BolusSuggestionUserInfo(recommendedBolus: units ?? 0, maxBolus: self.deviceManager.loopManager.settings.maximumBolus).rawValue)
+                replyHandler(BolusSuggestionUserInfo(recommendedBolus: units ?? 0, maxBolus: self.deviceDataManager.loopManager.settings.maximumBolus).rawValue)
             }
         case SetBolusUserInfo.name?:
             if let bolus = SetBolusUserInfo(rawValue: message as SetBolusUserInfo.RawValue) {
-                self.deviceManager.enactBolus(units: bolus.value, at: bolus.startDate) { (error) in
+                self.deviceDataManager.enactBolus(units: bolus.value, at: bolus.startDate) { (error) in
                     if error == nil {
                         AnalyticsManager.shared.didSetBolusFromWatch(bolus.value)
                     }
@@ -200,7 +201,7 @@ final class WatchDataManager: NSObject, WCSessionDelegate {
                 // to prevent the Watch context being unnecessarily sent in response to the override being enabled
                 let previousActiveOverrideContext = lastActiveOverrideContext
                 lastActiveOverrideContext = overrideContext
-                let overrideSuccess = deviceManager.loopManager.settings.glucoseTargetRangeSchedule?.setOverride(overrideContext, from: overrideUserInfo.startDate, until: overrideUserInfo.effectiveEndDate)
+                let overrideSuccess = deviceDataManager.loopManager.settings.glucoseTargetRangeSchedule?.setOverride(overrideContext, from: overrideUserInfo.startDate, until: overrideUserInfo.effectiveEndDate)
 
                 if overrideSuccess == false {
                     lastActiveOverrideContext = previousActiveOverrideContext
@@ -209,7 +210,7 @@ final class WatchDataManager: NSObject, WCSessionDelegate {
                 replyHandler([:])
             } else {
                 lastActiveOverrideContext = nil
-                deviceManager.loopManager.settings.glucoseTargetRangeSchedule?.clearOverride()
+                deviceDataManager.loopManager.settings.glucoseTargetRangeSchedule?.clearOverride()
                 replyHandler([:])
             }
         default:
@@ -225,7 +226,7 @@ final class WatchDataManager: NSObject, WCSessionDelegate {
         switch activationState {
         case .activated:
             if let error = error {
-                deviceManager.logger.addError(error, fromSource: "WCSession")
+                deviceDataManager.logger.addError(error, fromSource: "WCSession")
             }
         case .inactive, .notActivated:
             break
@@ -234,7 +235,7 @@ final class WatchDataManager: NSObject, WCSessionDelegate {
 
     func session(_ session: WCSession, didFinish userInfoTransfer: WCSessionUserInfoTransfer, error: Error?) {
         if let error = error {
-            deviceManager.logger.addError(error, fromSource: "WCSession")
+            deviceDataManager.logger.addError(error, fromSource: "WCSession")
         }
     }
 

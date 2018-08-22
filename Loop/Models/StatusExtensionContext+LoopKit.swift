@@ -5,8 +5,7 @@
 //  Copyright © 2017 LoopKit Authors. All rights reserved.
 //
 
-import LoopKit
-
+import InsulinKit
 
 extension NetBasalContext {
     var tempBasal: DoseEntry? {

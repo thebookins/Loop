@@ -8,6 +8,7 @@
 
 import Foundation
 import HealthKit
+import InsulinKit
 import LoopKit
 
 extension WatchContext {

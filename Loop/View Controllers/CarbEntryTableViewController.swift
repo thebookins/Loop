@@ -6,7 +6,7 @@
 //  Copyright © 2016 Nathan Racklyeft. All rights reserved.
 //
 
-import LoopKitUI
+import CarbKit
 
 
 extension CarbEntryTableViewController: IdentifiableClass {

@@ -26,10 +26,6 @@ struct GlucoseRangeScheduleOverrideUserInfo {
     var effectiveEndDate: Date {
         return endDate ?? .distantFuture
     }
-
-    var dateInterval: DateInterval {
-        return DateInterval(start: startDate, end: effectiveEndDate)
-    }
 }
 
 extension GlucoseRangeScheduleOverrideUserInfo: RawRepresentable {

@@ -9,19 +9,15 @@
 import WatchKit
 
 enum LoopImage: String {
-    case fresh
-    case aging
-    case stale
-    case unknown
-
-    var imageName: String {
-        return "loop_\(rawValue)"
-    }
+    case Fresh
+    case Aging
+    case Stale
+    case Unknown
 }
 
 
 extension WKInterfaceImage {
     func setLoopImage(_ loopImage: LoopImage) {
-        setImageNamed(loopImage.imageName)
+        setImageNamed("loop_\(loopImage.rawValue.lowercased())")
     }
 }

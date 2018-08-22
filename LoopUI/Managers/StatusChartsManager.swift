@@ -8,14 +8,17 @@
 
 import Foundation
 import HealthKit
-import LoopKit
 import SwiftCharts
-import os.log
 
+public protocol TargetPointsCalculator {
+    var glucosePoints: [ChartPoint] { get }
+    var overridePoints: [ChartPoint] { get }
+    var overrideDurationPoints: [ChartPoint] { get }
+
+    func calculate(_ xAxisValues: [ChartAxisValue]?)
+}
 
 public final class StatusChartsManager {
-    private let log = OSLog(category: "StatusChartsManager")
-
     public init(colors: ChartColorPalette, settings: ChartSettings) {
         self.colors = colors
         self.chartSettings = settings
@@ -56,8 +59,6 @@ public final class StatusChartsManager {
     public var gestureRecognizer: UIGestureRecognizer?
 
     public func didReceiveMemoryWarning() {
-        log.info("Purging chart data in response to memory warning")
-
         xAxisValues = nil
         glucosePoints = []
         predictedGlucosePoints = []
@@ -87,7 +88,6 @@ public final class StatusChartsManager {
     public var startDate = Date() {
         didSet {
             if startDate != oldValue {
-                log.debug("New chart start date: %@", String(describing: startDate))
                 xAxisValues = nil
 
                 // Set a new minimum end date
@@ -100,7 +100,6 @@ public final class StatusChartsManager {
     private var endDate = Date() {
         didSet {
             if endDate != oldValue {
-                log.debug("New chart end date: %@", String(describing: endDate))
                 xAxisValues = nil
             }
         }
@@ -109,10 +108,6 @@ public final class StatusChartsManager {
     /// The latest allowed date on the X-axis
     public var maxEndDate = Date.distantFuture {
         didSet {
-            if maxEndDate != oldValue {
-                log.debug("New chart max end date: %@", String(describing: maxEndDate))
-            }
-
             endDate = min(endDate, maxEndDate)
         }
     }
@@ -122,7 +117,7 @@ public final class StatusChartsManager {
     /// Dates are rounded up to the next hour.
     ///
     /// - Parameter date: The new candidate date
-    public func updateEndDate(_ date: Date) {
+    private func updateEndDate(_ date: Date) {
         if date > endDate {
             var components = DateComponents()
             components.minute = 0
@@ -138,7 +133,7 @@ public final class StatusChartsManager {
         }
     }
 
-    public var glucoseUnit: HKUnit = .milligramsPerDeciliter {
+    public var glucoseUnit: HKUnit = HKUnit.milligramsPerDeciliter() {
         didSet {
             if glucoseUnit != oldValue {
                 // Regenerate the glucose display points
@@ -193,7 +188,7 @@ public final class StatusChartsManager {
     /// The chart points for alternate predicted glucose
     public var alternatePredictedGlucosePoints: [ChartPoint]?
 
-    public var targetGlucoseSchedule: GlucoseRangeSchedule? {
+    public var targetPointsCalculator: TargetPointsCalculator? {
         didSet {
             targetGlucosePoints = []
         }
@@ -308,7 +303,6 @@ public final class StatusChartsManager {
 
     public func glucoseChartWithFrame(_ frame: CGRect) -> Chart? {
         if let chart = glucoseChart, chart.frame != frame {
-            log.debug("Glucose chart frame changed to %{public}@", String(describing: frame))
             self.glucoseChart = nil
         }
 
@@ -947,20 +941,13 @@ public final class StatusChartsManager {
             generateXAxisValues()
         }
 
-        if targetGlucosePoints.count == 0,
-            let xAxisValues = xAxisValues, xAxisValues.count > 1,
-            let schedule = targetGlucoseSchedule
+        if let calculator = targetPointsCalculator,
+           targetGlucosePoints.count == 0
         {
-            targetGlucosePoints = ChartPoint.pointsForGlucoseRangeSchedule(schedule, xAxisValues: xAxisValues)
-
-            if let override = schedule.override {
-                targetOverridePoints = ChartPoint.pointsForGlucoseRangeScheduleOverride(override, unit: schedule.unit, xAxisValues: xAxisValues, extendEndDateToChart: true)
-
-                targetOverrideDurationPoints = ChartPoint.pointsForGlucoseRangeScheduleOverride(override, unit: schedule.unit, xAxisValues: xAxisValues)
-            } else {
-                targetOverridePoints = []
-                targetOverrideDurationPoints = []
-            }
+            calculator.calculate(xAxisValues)
+            targetGlucosePoints = calculator.glucosePoints
+            targetOverridePoints = calculator.overridePoints
+            targetOverrideDurationPoints = calculator.overrideDurationPoints
         }
     }
 }

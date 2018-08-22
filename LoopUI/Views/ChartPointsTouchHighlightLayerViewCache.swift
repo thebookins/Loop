@@ -53,16 +53,12 @@ final class ChartPointsTouchHighlightLayerViewCache {
                     return nil
                 }
             },
-            viewGenerator: { [weak self] (chartPointModel, layer, chart) -> UIView? in
-                guard let strongSelf = self else {
-                    return nil
-                }
-
-                let containerView = strongSelf.containerView
+            viewGenerator: { [unowned self] (chartPointModel, layer, chart) -> UIView? in
+                let containerView = self.containerView
                 containerView.frame = chart.contentView.bounds
                 containerView.alpha = 1  // This is animated to 0 when touch last ended
 
-                let xAxisOverlayView = strongSelf.xAxisOverlayView
+                let xAxisOverlayView = self.xAxisOverlayView
                 if xAxisOverlayView.superview == nil {
                     xAxisOverlayView.frame = CGRect(
                         origin: CGPoint(x: containerView.bounds.minX,
@@ -74,7 +70,7 @@ final class ChartPointsTouchHighlightLayerViewCache {
                     containerView.addSubview(xAxisOverlayView)
                 }
 
-                let point = strongSelf.point
+                let point = self.point
                 point.center = chartPointModel.screenLoc
                 if point.superview == nil {
                     point.fillColor = tintColor.withAlphaComponent(0.5)
@@ -82,7 +78,7 @@ final class ChartPointsTouchHighlightLayerViewCache {
                 }
 
                 if let text = chartPointModel.chartPoint.y.labels.first?.text {
-                    let label = strongSelf.labelY
+                    let label = self.labelY
 
                     label.text = text
                     label.sizeToFit()
@@ -99,7 +95,7 @@ final class ChartPointsTouchHighlightLayerViewCache {
                 }
 
                 if let text = chartPointModel.chartPoint.x.labels.first?.text {
-                    let label = strongSelf.labelX
+                    let label = self.labelX
                     label.text = text
                     label.sizeToFit()
                     label.center = CGPoint(x: chartPointModel.screenLoc.x, y: xAxisOverlayView.center.y)

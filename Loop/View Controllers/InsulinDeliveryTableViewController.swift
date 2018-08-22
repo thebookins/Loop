@@ -6,7 +6,7 @@
 //  Copyright © 2016 Nathan Racklyeft. All rights reserved.
 //
 
-import LoopKitUI
+import InsulinKit
 
 
 extension InsulinDeliveryTableViewController: IdentifiableClass {

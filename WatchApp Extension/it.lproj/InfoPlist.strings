@@ -1,6 +1,3 @@
-/* Bundle display name */
-"CFBundleDisplayName" = "WatchApp Extension";
-
-/* Bundle name */
-"CFBundleName" = "$(PRODUCT_NAME)";
+/* (No Commment) */
+"CFBundleDisplayName" = "Estensione WatchApp";
 

@@ -8,6 +8,8 @@
 
 import UIKit
 import UserNotifications
+import CarbKit
+import InsulinKit
 
 @UIApplicationMain
 final class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -21,7 +23,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         NotificationManager.authorize(delegate: self)
 
-        DiagnosticLogger.shared.forCategory("AppDelegate").info(#function)
+        let bundle = Bundle(for: type(of: self))
+        DiagnosticLogger.shared = DiagnosticLogger(subsystem: bundle.bundleIdentifier!, version: bundle.shortVersionString)
+        DiagnosticLogger.shared?.forCategory("AppDelegate").info(#function)
 
         AnalyticsManager.shared.application(application, didFinishLaunchingWithOptions: launchOptions)
 
@@ -49,7 +53,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
-        deviceManager.pumpManager?.updateBLEHeartbeatPreference()
+        deviceManager.updateTimerTickPreference()
     }
 
     func applicationWillTerminate(_ application: UIApplication) {

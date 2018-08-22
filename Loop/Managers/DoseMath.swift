@@ -7,7 +7,9 @@
 //
 
 import Foundation
+import CarbKit
 import HealthKit
+import InsulinKit
 import LoopKit
 
 
@@ -103,13 +105,19 @@ extension InsulinCorrection {
 }
 
 
-struct TempBasalRecommendation: Equatable {
+struct TempBasalRecommendation {
     let unitsPerHour: Double
     let duration: TimeInterval
 
     /// A special command which cancels any existing temp basals
     static var cancel: TempBasalRecommendation {
         return self.init(unitsPerHour: 0, duration: 0)
+    }
+}
+
+extension TempBasalRecommendation: Equatable {
+    static func ==(lhs: TempBasalRecommendation, rhs: TempBasalRecommendation) -> Bool {
+        return lhs.unitsPerHour == rhs.unitsPerHour && lhs.duration == rhs.duration
     }
 }
 
