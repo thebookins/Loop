@@ -7,68 +7,156 @@
 //
 
 import UIKit
+import Intents
+import LoopKit
 import UserNotifications
-import CarbKit
-import InsulinKit
 
 @UIApplicationMain
 final class AppDelegate: UIResponder, UIApplicationDelegate {
 
+    private lazy var log = DiagnosticLogger.shared.forCategory("AppDelegate")
+
     var window: UIWindow?
 
-    private(set) lazy var deviceManager = DeviceDataManager()
+    private var deviceManager: DeviceDataManager?
 
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplicationLaunchOptionsKey: Any]?) -> Bool {
-        window?.tintColor = UIColor.tintColor
-
+    private var rootViewController: RootNavigationController! {
+        return window?.rootViewController as? RootNavigationController
+    }
+    
+    private var isAfterFirstUnlock: Bool {
+        let fileManager = FileManager.default
+        do {
+            let documentDirectory = try fileManager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor:nil, create:false)
+            let fileURL = documentDirectory.appendingPathComponent("protection.test")
+            guard fileManager.fileExists(atPath: fileURL.path) else {
+                let contents = Data("unimportant".utf8)
+                try? contents.write(to: fileURL, options: .completeFileProtectionUntilFirstUserAuthentication)
+                // If file doesn't exist, we're at first start, which will be user directed.
+                return true
+            }
+            let contents = try? Data(contentsOf: fileURL)
+            return contents != nil
+        } catch {
+            log.error(error)
+        }
+        return false
+    }
+    
+    private func finishLaunch() {
+        log.default("Finishing launching")
+        
+        deviceManager = DeviceDataManager()
+        
         NotificationManager.authorize(delegate: self)
+ 
+        let mainStatusViewControllers = UIStoryboard(name: "Main", bundle: Bundle(for: AppDelegate.self)).instantiateViewController(withIdentifier: "MainStatusViewController") as! StatusTableViewController
+        
+        rootViewController.pushViewController(mainStatusViewControllers, animated: false)
 
-        let bundle = Bundle(for: type(of: self))
-        DiagnosticLogger.shared = DiagnosticLogger(subsystem: bundle.bundleIdentifier!, version: bundle.shortVersionString)
-        DiagnosticLogger.shared?.forCategory("AppDelegate").info(#function)
+        rootViewController.rootViewController.deviceManager = deviceManager
+        
+    }
 
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        
+        log.default("didFinishLaunchingWithOptions \(String(describing: launchOptions))")
+        
         AnalyticsManager.shared.application(application, didFinishLaunchingWithOptions: launchOptions)
 
-        if  let navVC = window?.rootViewController as? UINavigationController,
-            let statusVC = navVC.viewControllers.first as? StatusTableViewController {
-            statusVC.deviceManager = deviceManager
+        guard isAfterFirstUnlock else {
+            log.default("Launching before first unlock; pausing launch...")
+            return false
+        }
+
+        finishLaunch()
+
+        let notificationOption = launchOptions?[.remoteNotification]
+        
+        if let notification = notificationOption as? [String: AnyObject] {
+            deviceManager?.handleRemoteNotification(notification)
         }
 
         return true
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
-        // Sent when the application is about to move from active to inactive state. This can occur for certain types of temporary interruptions (such as an incoming phone call or SMS message) or when the user quits the application and it begins the transition to the background state.
-        // Use this method to pause ongoing tasks, disable timers, and throttle down OpenGL ES frame rates. Games should use this method to pause the game.
+        log.default(#function)
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
-        // Use this method to release shared resources, save user data, invalidate timers, and store enough application state information to restore your application to its current state in case it is terminated later.
-        // If your application supports background execution, this method is called instead of applicationWillTerminate: when the user quits.
+        log.default(#function)
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
-        // Called as part of the transition from the background to the inactive state; here you can undo many of the changes made on entering the background.
+        log.default(#function)
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
-        deviceManager.updateTimerTickPreference()
+        deviceManager?.updatePumpManagerBLEHeartbeatPreference()
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
-        // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
+        log.default(#function)
     }
 
-    func applicationShouldRequestHealthAuthorization(_ application: UIApplication) {
+    // MARK: - Continuity
 
+    func application(_ application: UIApplication, continue userActivity: NSUserActivity, restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void) -> Bool {
+        log.default(#function)
+
+        if #available(iOS 12.0, *) {
+            if userActivity.activityType == NewCarbEntryIntent.className {
+                log.default("Restoring \(userActivity.activityType) intent")
+                rootViewController.restoreUserActivityState(.forNewCarbEntry())
+                return true
+            }
+        }
+
+        switch userActivity.activityType {
+        case NSUserActivity.newCarbEntryActivityType,
+             NSUserActivity.viewLoopStatusActivityType:
+            log.default("Restoring \(userActivity.activityType) activity")
+            restorationHandler([rootViewController])
+            return true
+        default:
+            return false
+        }
+    }
+    
+    // MARK: - Remote notifications
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        let tokenParts = deviceToken.map { data in String(format: "%02.2hhx", data) }
+        let token = tokenParts.joined()
+        log.default("RemoteNotifications device token: \(token)")
+        deviceManager?.loopManager.settings.deviceToken = deviceToken
     }
 
-    // MARK: - 3D Touch
-
-    func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
-        completionHandler(false)
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        log.error("Failed to register: \(error)")
     }
+    
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable : Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        guard let notification = userInfo as? [String: AnyObject] else {
+            completionHandler(.failed)
+            return
+        }
+      
+        deviceManager?.handleRemoteNotification(notification)
+        completionHandler(.noData)
+    }
+    
+    func applicationProtectedDataDidBecomeAvailable(_ application: UIApplication) {
+        log.default("applicationProtectedDataDidBecomeAvailable")
+        
+        if deviceManager == nil {
+            finishLaunch()
+        }
+    }
+
 }
 
 
@@ -82,7 +170,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
             {
                 AnalyticsManager.shared.didRetryBolus()
 
-                deviceManager.enactBolus(units: units, at: startDate) { (_) in
+                deviceManager?.enactBolus(units: units, at: startDate) { (_) in
                     completionHandler()
                 }
                 return
@@ -97,4 +185,5 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.badge, .sound, .alert])
     }
+    
 }

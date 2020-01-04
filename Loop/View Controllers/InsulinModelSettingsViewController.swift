@@ -7,8 +7,9 @@
 
 import UIKit
 import HealthKit
-import InsulinKit
+import LoopCore
 import LoopKit
+import LoopUI
 
 
 protocol InsulinModelSettingsViewControllerDelegate: class {
@@ -20,10 +21,10 @@ class InsulinModelSettingsViewController: ChartsTableViewController, Identifiabl
 
     var glucoseUnit: HKUnit {
         get {
-            return charts.glucoseUnit
+            return insulinModelChart.glucoseUnit
         }
         set {
-            charts.glucoseUnit = newValue
+            insulinModelChart.glucoseUnit = newValue
 
             refreshContext = true
             if visible && active {
@@ -48,8 +49,12 @@ class InsulinModelSettingsViewController: ChartsTableViewController, Identifiabl
         }
     }
 
+    override func glucoseUnitDidChange() {
+        refreshContext = true
+    }
+
     /// The sensitivity (in glucose units) to use for demonstrating the model
-    var insulinSensitivitySchedule = InsulinSensitivitySchedule(unit: .milligramsPerDeciliter(), dailyItems: [RepeatingScheduleValue<Double>(startTime: 0, value: 40)])!
+    var insulinSensitivitySchedule = InsulinSensitivitySchedule(unit: .milligramsPerDeciliter, dailyItems: [RepeatingScheduleValue<Double>(startTime: 0, value: 40)])!
 
     fileprivate let walshModelIndex = 0
 
@@ -100,7 +105,7 @@ class InsulinModelSettingsViewController: ChartsTableViewController, Identifiabl
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        tableView.rowHeight = UITableViewAutomaticDimension
+        tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 91
     }
 
@@ -143,6 +148,12 @@ class InsulinModelSettingsViewController: ChartsTableViewController, Identifiabl
 
     // MARK: - ChartsTableViewController
 
+    private let insulinModelChart = InsulinModelChart()
+
+    override func createChartsManager() -> ChartsManager {
+        return ChartsManager(colors: .default, settings: .default, charts: [insulinModelChart], traitCollection: traitCollection)
+    }
+
     override func reloadData(animated: Bool = true) {
         if active && visible && refreshContext {
             refreshContext = false
@@ -156,22 +167,23 @@ class InsulinModelSettingsViewController: ChartsTableViewController, Identifiabl
             let endingGlucoseQuantity = HKQuantity(unit: glucoseUnit, doubleValue: glucoseUnit.glucoseExampleTargetValue)
             let startingGlucoseSample = HKQuantitySample(type: HKQuantityType.quantityType(forIdentifier: .bloodGlucose)!, quantity: startingGlucoseQuantity, start: charts.startDate, end: charts.startDate)
 
-            charts.glucoseDisplayRange = (min: endingGlucoseQuantity, max: startingGlucoseQuantity)
+            insulinModelChart.glucoseDisplayRange = endingGlucoseQuantity...startingGlucoseQuantity
 
             var unselectedModelValues = [[GlucoseValue]]()
 
             for (index, model) in allModels.enumerated() {
                 let effects = [bolus].glucoseEffects(insulinModel: model, insulinSensitivity: insulinSensitivitySchedule)
-                let values = LoopMath.predictGlucose(startingGlucoseSample, effects: effects)
+                let values = LoopMath.predictGlucose(startingAt: startingGlucoseSample, effects: effects)
 
                 if selectedModelIndex == index {
-                    charts.setSelectedInsulinModelValues(values)
+                    insulinModelChart.setSelectedInsulinModelValues(values)
                 } else {
                     unselectedModelValues.append(values)
                 }
             }
 
-            charts.setUnselectedInsulinModelValues(unselectedModelValues)
+            insulinModelChart.setUnselectedInsulinModelValues(unselectedModelValues)
+            charts.invalidateChart(atIndex: 0)
 
             // Rendering
             charts.prerender()
@@ -210,7 +222,7 @@ class InsulinModelSettingsViewController: ChartsTableViewController, Identifiabl
             let cell = tableView.dequeueReusableCell(withIdentifier: ChartTableViewCell.className, for: indexPath) as! ChartTableViewCell
             cell.contentView.layoutMargins.left = tableView.separatorInset.left
             cell.chartContentView.chartGenerator = { [weak self] (frame) in
-                return self?.charts.insulinModelChartWithFrame(frame)?.view
+                return self?.charts.chart(atIndex: 0, frame: frame)?.view
             }
 
             return cell
@@ -318,6 +330,18 @@ extension InsulinModelSettingsViewController: UITextFieldDelegate {
 
         DispatchQueue.main.async {
             self.durationPicker.countDownDuration = model.actionDuration
+        }
+    }
+}
+
+
+fileprivate extension HKUnit {
+    /// An example value for the "ideal" target
+    var glucoseExampleTargetValue: Double {
+        if self == .milligramsPerDeciliter {
+            return 100
+        } else {
+            return 5.5
         }
     }
 }

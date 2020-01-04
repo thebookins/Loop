@@ -53,24 +53,32 @@ final class ChartPointsTouchHighlightLayerViewCache {
                     return nil
                 }
             },
-            viewGenerator: { [unowned self] (chartPointModel, layer, chart) -> UIView? in
-                let containerView = self.containerView
+            viewGenerator: { [weak self] (chartPointModel, layer, chart) -> UIView? in
+                guard let strongSelf = self else {
+                    return nil
+                }
+
+                let containerView = strongSelf.containerView
                 containerView.frame = chart.contentView.bounds
                 containerView.alpha = 1  // This is animated to 0 when touch last ended
 
-                let xAxisOverlayView = self.xAxisOverlayView
+                let xAxisOverlayView = strongSelf.xAxisOverlayView
                 if xAxisOverlayView.superview == nil {
                     xAxisOverlayView.frame = CGRect(
                         origin: CGPoint(x: containerView.bounds.minX,
                                         y: containerView.bounds.maxY + 1), // Don't clip X line
                         size: xAxisLayer.frame.size
                     )
-                    xAxisOverlayView.backgroundColor = UIColor.white
+                    if #available(iOSApplicationExtension 13.0, iOS 13.0, *) {
+                        xAxisOverlayView.backgroundColor = .systemBackground
+                    } else {
+                        xAxisOverlayView.backgroundColor = .white
+                    }
                     xAxisOverlayView.isOpaque = true
                     containerView.addSubview(xAxisOverlayView)
                 }
 
-                let point = self.point
+                let point = strongSelf.point
                 point.center = chartPointModel.screenLoc
                 if point.superview == nil {
                     point.fillColor = tintColor.withAlphaComponent(0.5)
@@ -78,7 +86,7 @@ final class ChartPointsTouchHighlightLayerViewCache {
                 }
 
                 if let text = chartPointModel.chartPoint.y.labels.first?.text {
-                    let label = self.labelY
+                    let label = strongSelf.labelY
 
                     label.text = text
                     label.sizeToFit()
@@ -95,7 +103,7 @@ final class ChartPointsTouchHighlightLayerViewCache {
                 }
 
                 if let text = chartPointModel.chartPoint.x.labels.first?.text {
-                    let label = self.labelX
+                    let label = strongSelf.labelX
                     label.text = text
                     label.sizeToFit()
                     label.center = CGPoint(x: chartPointModel.screenLoc.x, y: xAxisOverlayView.center.y)

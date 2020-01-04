@@ -8,9 +8,14 @@
 
 import UIKit
 import HealthKit
-
+import LoopKit
+import LoopKitUI
 
 public final class GlucoseHUDView: BaseHUDView {
+    
+    override public var orderPriority: HUDViewOrderPriority {
+        return 2
+    }
 
     @IBOutlet private weak var unitLabel: UILabel! {
         didSet {
@@ -42,10 +47,9 @@ public final class GlucoseHUDView: BaseHUDView {
         glucoseLabel.textColor = tintColor
     }
 
-    public var stateColors: StateColorPalette? {
-        didSet {
-            updateColor()
-        }
+    override public func stateColorsDidUpdate() {
+        super.stateColorsDidUpdate()
+        updateColor()
     }
 
     private func updateColor() {
@@ -92,16 +96,22 @@ public final class GlucoseHUDView: BaseHUDView {
 
         let time = timeFormatter.string(from: glucoseStartDate)
         caption?.text = time
+        
+        let sensorDataCurrent = glucoseStartDate.timeIntervalSinceNow > TimeInterval(minutes: -15)
 
         let numberFormatter = NumberFormatter.glucoseFormatter(for: unit)
-        if let valueString = numberFormatter.string(from: NSNumber(value: glucoseQuantity)) {
-            glucoseLabel.text = valueString
-            accessibilityStrings.append(String(format: NSLocalizedString("%1$@ at %2$@", comment: "Accessbility format value describing glucose: (1: glucose number)(2: glucose time)"), valueString, time))
+        if let valueString = numberFormatter.string(from: glucoseQuantity) {
+            if sensorDataCurrent {
+                glucoseLabel.text = valueString
+            } else {
+                glucoseLabel.text = "-"
+            }
+            accessibilityStrings.append(String(format: LocalizedString("%1$@ at %2$@", comment: "Accessbility format value describing glucose: (1: glucose number)(2: glucose time)"), valueString, time))
         }
 
-        var unitStrings = [unit.glucoseUnitDisplayString]
+        var unitStrings = [unit.localizedShortUnitString]
 
-        if let trend = sensor?.trendType {
+        if let trend = sensor?.trendType, sensorDataCurrent {
             unitStrings.append(trend.symbol)
             accessibilityStrings.append(trend.localizedDescription)
         }
@@ -110,7 +120,7 @@ public final class GlucoseHUDView: BaseHUDView {
             sensorAlertState = .missing
         } else if sensor!.isStateValid == false {
             sensorAlertState = .invalid
-            accessibilityStrings.append(NSLocalizedString("Needs attention", comment: "Accessibility label component for glucose HUD describing an invalid state"))
+            accessibilityStrings.append(LocalizedString("Needs attention", comment: "Accessibility label component for glucose HUD describing an invalid state"))
         } else if sensor!.isLocal == false {
             sensorAlertState = .remote
         } else {
@@ -121,12 +131,6 @@ public final class GlucoseHUDView: BaseHUDView {
         accessibilityValue = accessibilityStrings.joined(separator: ", ")
     }
 
-    private lazy var timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-
-        return formatter
-    }()
+    private lazy var timeFormatter = DateFormatter(timeStyle: .short)
 
 }

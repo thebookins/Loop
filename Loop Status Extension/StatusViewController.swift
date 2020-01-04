@@ -8,6 +8,9 @@
 
 import CoreData
 import HealthKit
+import LoopKit
+import LoopKitUI
+import LoopCore
 import LoopUI
 import NotificationCenter
 import UIKit
@@ -21,8 +24,6 @@ class StatusViewController: UIViewController, NCWidgetProviding {
             hudView.glucoseHUD.stateColors = .cgmStatus
             hudView.glucoseHUD.tintColor = .glucoseTintColor
             hudView.basalRateHUD.tintColor = .doseTintColor
-            hudView.reservoirVolumeHUD.stateColors = .pumpStatus
-            hudView.batteryHUD.stateColors = .pumpStatus
         }
     }
     @IBOutlet weak var subtitleLabel: UILabel!
@@ -47,53 +48,86 @@ class StatusViewController: UIViewController, NCWidgetProviding {
                 settings.labelsToAxisSpacingX = 6
                 settings.clipInnerFrame = false
                 return settings
-            }()
+            }(),
+            traitCollection: traitCollection
         )
 
-        charts.glucoseDisplayRange = (
-            min: HKQuantity(unit: HKUnit.milligramsPerDeciliter(), doubleValue: 100),
-            max: HKQuantity(unit: HKUnit.milligramsPerDeciliter(), doubleValue: 175)
-        )
+        charts.predictedGlucose.glucoseDisplayRange = HKQuantity(unit: .milligramsPerDeciliter, doubleValue: 100)...HKQuantity(unit: .milligramsPerDeciliter, doubleValue: 175)
 
         return charts
     }()
 
     var statusExtensionContext: StatusExtensionContext?
-    var defaults: UserDefaults?
-    final var observationContext = 1
+
+    lazy var defaults = UserDefaults.appGroup
+
+    private var observers: [Any] = []
+
+    lazy var healthStore = HKHealthStore()
+
+    lazy var cacheStore = PersistenceController.controllerInAppGroupDirectory()
+
+    lazy var glucoseStore = GlucoseStore(
+        healthStore: healthStore,
+        cacheStore: cacheStore,
+        observationEnabled: false
+    )
+
+    lazy var doseStore = DoseStore(
+        healthStore: healthStore,
+        cacheStore: cacheStore,
+        observationEnabled: false,
+        insulinModel: defaults?.insulinModelSettings?.model,
+        basalProfile: defaults?.basalRateSchedule,
+        insulinSensitivitySchedule: defaults?.insulinSensitivitySchedule
+    )
+    
+    private var pluginManager: PluginManager = {
+        let containingAppFrameworksURL = Bundle.main.privateFrameworksURL?.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Frameworks")
+        return PluginManager(pluginsURL: containingAppFrameworksURL)
+    }()
 
     override func viewDidLoad() {
         super.viewDidLoad()
+
         subtitleLabel.isHidden = true
-        subtitleLabel.textColor = .subtitleLabelColor
+        if #available(iOSApplicationExtension 13.0, iOS 13.0, *) {
+            subtitleLabel.textColor = .secondaryLabel
+            insulinLabel.textColor = .secondaryLabel
+        } else {
+            subtitleLabel.textColor = .subtitleLabelColor
+            insulinLabel.textColor = .subtitleLabelColor
+        }
+
         insulinLabel.isHidden = true
-        insulinLabel.textColor = .subtitleLabelColor
 
         let tapGestureRecognizer = UITapGestureRecognizer(target: self, action: #selector(openLoopApp(_:)))
         view.addGestureRecognizer(tapGestureRecognizer)
 
-        defaults = UserDefaults(suiteName: Bundle.main.appGroupSuiteName)
-        if let defaults = defaults {
-            defaults.addObserver(
-                self,
-                forKeyPath: defaults.statusExtensionContextObservableKey,
-                options: [],
-                context: &observationContext
-            )
-        }
-
         self.charts.prerender()
-        glucoseChartContentView.chartGenerator = { [unowned self] (frame) in
-            return self.charts.glucoseChartWithFrame(frame)?.view
+        glucoseChartContentView.chartGenerator = { [weak self] (frame) in
+            return self?.charts.chart(atIndex: 0, frame: frame)?.view
         }
 
-        self.extensionContext?.widgetLargestAvailableDisplayMode = NCWidgetDisplayMode.expanded
-        glucoseChartContentView.isHidden = self.extensionContext?.widgetActiveDisplayMode != .expanded
+        extensionContext?.widgetLargestAvailableDisplayMode = .expanded
+
+        switch extensionContext?.widgetActiveDisplayMode ?? .compact {
+        case .expanded:
+            glucoseChartContentView.isHidden = false
+        case .compact:
+            fallthrough
+        @unknown default:
+            glucoseChartContentView.isHidden = true
+        }
+
+        observers = [
+            // TODO: Observe cross-process notifications of Loop status updating
+        ]
     }
 
     deinit {
-        if let defaults = defaults {
-            defaults.removeObserver(self, forKeyPath: defaults.statusExtensionContextObservableKey, context: &observationContext)
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
     
@@ -101,10 +135,12 @@ class StatusViewController: UIViewController, NCWidgetProviding {
         let compactHeight = hudView.systemLayoutSizeFitting(maxSize).height + subtitleLabel.systemLayoutSizeFitting(maxSize).height
 
         switch activeDisplayMode {
-        case .compact:
-            preferredContentSize = CGSize(width: maxSize.width, height: compactHeight)
         case .expanded:
             preferredContentSize = CGSize(width: maxSize.width, height: compactHeight + 100)
+        case .compact:
+            fallthrough
+        @unknown default:
+            preferredContentSize = CGSize(width: maxSize.width, height: compactHeight)
         }
     }
 
@@ -117,13 +153,8 @@ class StatusViewController: UIViewController, NCWidgetProviding {
         })
     }
 
-    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
-        guard context == &observationContext else {
-            super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
-            return
-        }
-        
-        update()
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        charts.traitCollection = traitCollection
     }
     
     @objc private func openLoopApp(_: Any) {
@@ -139,115 +170,137 @@ class StatusViewController: UIViewController, NCWidgetProviding {
     
     @discardableResult
     func update() -> NCUpdateResult {
-        guard let context = defaults?.statusExtensionContext else {
-            return NCUpdateResult.failed
-        }
-        if let lastGlucose = context.glucose?.last {
-            hudView.glucoseHUD.setGlucoseQuantity(lastGlucose.value,
-               at: lastGlucose.startDate,
-               unit: lastGlucose.unit,
-               sensor: context.sensor
-            )
-        }
-        
-        if let batteryPercentage = context.batteryPercentage {
-            hudView.batteryHUD.batteryLevel = Double(batteryPercentage)
-        }
-        
-        if let reservoir = context.reservoir {
-            hudView.reservoirVolumeHUD.reservoirLevel = min(1, max(0, Double(reservoir.unitVolume / Double(reservoir.capacity))))
-            hudView.reservoirVolumeHUD.setReservoirVolume(volume: reservoir.unitVolume, at: reservoir.startDate)
-        }
-
-        if let netBasal = context.netBasal {
-            hudView.basalRateHUD.setNetBasalRate(netBasal.rate, percent: netBasal.percentage, at: netBasal.start)
-        }
-
-        if let loop = context.loop {
-            hudView.loopCompletionHUD.dosingEnabled = loop.dosingEnabled
-            hudView.loopCompletionHUD.lastLoopCompleted = loop.lastCompleted
-        }
-
         subtitleLabel.isHidden = true
         insulinLabel.isHidden = true
 
-        let dateFormatter: DateFormatter = {
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateStyle = .none
-            dateFormatter.timeStyle = .short
+        let group = DispatchGroup()
 
-            return dateFormatter
-        }()
+        var activeInsulin: Double?
+        var glucose: [StoredGlucoseSample] = []
 
-        let insulinFormatter: NumberFormatter = {
-            let numberFormatter = NumberFormatter()
-            
-            numberFormatter.numberStyle = .decimal
-            numberFormatter.minimumFractionDigits = 1
-            numberFormatter.maximumFractionDigits = 1
-            
-            return numberFormatter
-        }()
-
-        if let activeInsulin = context.activeInsulin, let valueStr = insulinFormatter.string(from:NSNumber(value:activeInsulin))
-        {
-            insulinLabel.text = String(format: NSLocalizedString(
-                    "IOB %1$@ U",
-                    comment: "The subtitle format describing units of active insulin. (1: localized insulin value description)"),
-                                        valueStr)
-            insulinLabel.isHidden = false
+        group.enter()
+        doseStore.insulinOnBoard(at: Date()) { (result) in
+            switch result {
+            case .success(let iobValue):
+                activeInsulin = iobValue.value
+            case .failure:
+                activeInsulin = nil
+            }
+            group.leave()
         }
-        
-        if let glucose = context.glucose,
-            glucose.count > 0 {
-            let unit = glucose[0].unit
-            let glucoseFormatter = NumberFormatter.glucoseFormatter(for: unit)
 
-            charts.glucoseUnit = unit
-            charts.glucosePoints = glucose.map {
-                ChartPoint(
-                    x: ChartAxisValueDate(date: $0.startDate, formatter: dateFormatter),
-                    y: ChartAxisValueDoubleUnit($0.value, unitString: unit.unitString, formatter: glucoseFormatter)
+        charts.startDate = Calendar.current.nextDate(after: Date(timeIntervalSinceNow: .minutes(-5)), matching: DateComponents(minute: 0), matchingPolicy: .strict, direction: .backward) ?? Date()
+
+        // Showing the whole history plus full prediction in the glucose plot
+        // is a little crowded, so limit it to three hours in the future:
+        charts.maxEndDate = charts.startDate.addingTimeInterval(TimeInterval(hours: 3))
+
+        group.enter()
+        glucoseStore.getCachedGlucoseSamples(start: charts.startDate) { (result) in
+            glucose = result
+            group.leave()
+        }
+
+        group.notify(queue: .main) {
+            guard let defaults = self.defaults, let context = defaults.statusExtensionContext else {
+                return
+            }
+
+            let hudViews: [BaseHUDView]
+
+            if let hudViewsContext = context.pumpManagerHUDViewsContext,
+                let contextHUDViews = PumpManagerHUDViewsFromRawValue(hudViewsContext.pumpManagerHUDViewsRawValue, pluginManager: self.pluginManager)
+            {
+                hudViews = contextHUDViews
+            } else {
+                hudViews = [ReservoirVolumeHUDView.instantiate(), BatteryLevelHUDView.instantiate()]
+            }
+
+            self.hudView.removePumpManagerProvidedViews()
+            for view in hudViews {
+                view.stateColors = .pumpStatus
+                self.hudView.addHUDView(view)
+            }
+
+            if let netBasal = context.netBasal {
+                self.hudView.basalRateHUD.setNetBasalRate(netBasal.rate, percent: netBasal.percentage, at: netBasal.start)
+            }
+
+            self.hudView.loopCompletionHUD.dosingEnabled = defaults.loopSettings?.dosingEnabled ?? false
+
+            if let lastCompleted = context.lastLoopCompleted {
+                self.hudView.loopCompletionHUD.lastLoopCompleted = lastCompleted
+            }
+
+            if let activeInsulin = activeInsulin {
+                let insulinFormatter: NumberFormatter = {
+                    let numberFormatter = NumberFormatter()
+
+                    numberFormatter.numberStyle = .decimal
+                    numberFormatter.minimumFractionDigits = 1
+                    numberFormatter.maximumFractionDigits = 1
+
+                    return numberFormatter
+                }()
+
+                if let valueStr = insulinFormatter.string(from: activeInsulin) {
+                    self.insulinLabel.text = String(format: NSLocalizedString("IOB %1$@ U",
+                        comment: "The subtitle format describing units of active insulin. (1: localized insulin value description)"),
+                        valueStr
+                    )
+                    self.insulinLabel.isHidden = false
+                }
+            }
+
+            guard let unit = context.predictedGlucose?.unit else {
+                return
+            }
+
+            if let lastGlucose = glucose.last {
+                self.hudView.glucoseHUD.setGlucoseQuantity(
+                    lastGlucose.quantity.doubleValue(for: unit),
+                    at: lastGlucose.startDate,
+                    unit: unit,
+                    sensor: context.sensor
                 )
             }
 
-            // Anchor the start date of the chart to the earliest date we have in our historical glucose
-            if let first = glucose.first {
-                charts.startDate = first.startDate
-            }
-            
-            // Showing the whole history plus full prediction in the glucose plot
-            // is a little crowded, so limit it to three hours in the future:
-            charts.maxEndDate = Date().addingTimeInterval(TimeInterval(hours: 3))
+            let glucoseFormatter = QuantityFormatter()
+            glucoseFormatter.setPreferredNumberFormatter(for: unit)
+
+            self.charts.predictedGlucose.glucoseUnit = unit
+            self.charts.predictedGlucose.setGlucoseValues(glucose)
 
             if let predictedGlucose = context.predictedGlucose?.samples {
-                charts.predictedGlucosePoints = predictedGlucose.map {
-                    ChartPoint(
-                        x: ChartAxisValueDate(date: $0.startDate, formatter: dateFormatter),
-                        y: ChartAxisValueDoubleUnit($0.quantity.doubleValue(for: unit), unitString: unit.unitString, formatter: glucoseFormatter)
-                    )
-                }
+                self.charts.predictedGlucose.setPredictedGlucoseValues(predictedGlucose)
 
                 if let eventualGlucose = predictedGlucose.last {
-                    let formatter = NumberFormatter.glucoseFormatter(for: eventualGlucose.unit)
-
-                    if let eventualGlucoseNumberString = formatter.string(from: NSNumber(value: eventualGlucose.quantity.doubleValue(for: unit))) {
-                        subtitleLabel.text = String(
+                    if let eventualGlucoseNumberString = glucoseFormatter.string(from: eventualGlucose.quantity, for: unit) {
+                        self.subtitleLabel.text = String(
                             format: NSLocalizedString(
-                                "Eventually %1$@ %2$@",
-                                comment: "The subtitle format describing eventual glucose.  (1: localized glucose value description) (2: localized glucose units description)"),
-                            eventualGlucoseNumberString,
-                            unit.glucoseUnitDisplayString
+                                "Eventually %1$@",
+                                comment: "The subtitle format describing eventual glucose.  (1: localized glucose value description)"
+                            ),
+                            eventualGlucoseNumberString
                         )
-                        subtitleLabel.isHidden = false
+                        self.subtitleLabel.isHidden = false
                     }
                 }
             }
 
-            charts.targetPointsCalculator = DatedRangeContextCalculator(targetRanges: context.targetRanges, temporaryOverride: context.temporaryOverride)
+            self.charts.predictedGlucose.targetGlucoseSchedule = defaults.loopSettings?.glucoseTargetRangeSchedule
+            self.charts.invalidateChart(atIndex: 0)
+            self.charts.prerender()
+            self.glucoseChartContentView.reloadChart()
+        }
 
-            charts.prerender()
-            glucoseChartContentView.reloadChart()
+        switch extensionContext?.widgetActiveDisplayMode ?? .compact {
+        case .expanded:
+            glucoseChartContentView.isHidden = false
+        case .compact:
+            fallthrough
+        @unknown default:
+            glucoseChartContentView.isHidden = true
         }
 
         // Right now we always act as if there's new data.
